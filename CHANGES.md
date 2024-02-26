@@ -1,5 +1,17 @@
 # Changelog [DE]:
 
+## 0.26.0
+- Experimentelles Farbschema hinzugefügt.
+- Vereinfachte Auswahl der Sekundärachse.
+- Der Datenbankupload wurde in Abschnitte unterteilt, um falsche Fehlermedungen zu vermeiden und den Fortschritt anzeigen zu können.
+
+## 0.25.2 ()
+- Erweiterung der Webhook-API.
+- Option für eine Handy-Erinnerung beim verlassen des Fahrzeugs hinzugefügt.
+- Optimierungen bei der Lade- und Rendergeschwindigkeit der Statistikdiagramme.
+- Fehler behoben, bei dem zum Teil falsche Ladevorgänge angezeigt wurden.
+- Fehler behoben, der verhinderte, dass Meilen als Distanzeinheit verwendet werden.
+
 ## 0.25.1 (27.07.2023)
 - Anpassungen an der UI, insbesondere in der Tripzusammenfassung.
 - Die Weitergabe des Standortes kann nun für jede API einzeln festgelegt werden.

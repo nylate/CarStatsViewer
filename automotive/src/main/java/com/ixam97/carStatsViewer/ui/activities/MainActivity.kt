@@ -1,14 +1,21 @@
 package com.ixam97.carStatsViewer.ui.activities
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PorterDuff
 import android.os.Bundle
+import android.view.LayoutInflater
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.Toast
+import androidx.constraintlayout.widget.ConstraintSet
+import androidx.core.graphics.drawable.toDrawable
 import androidx.core.view.drawToBitmap
+import androidx.core.view.isVisible
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.commit
 import androidx.lifecycle.Lifecycle
@@ -17,7 +24,9 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.ixam97.carStatsViewer.*
 import com.ixam97.carStatsViewer.dataCollector.DataCollector
 import com.ixam97.carStatsViewer.dataProcessor.DrivingState
+import com.ixam97.carStatsViewer.database.tripData.DrivingPoint
 import com.ixam97.carStatsViewer.database.tripData.TripType
+import com.ixam97.carStatsViewer.databinding.ActivityMainBinding
 import com.ixam97.carStatsViewer.ui.fragments.SummaryFragment
 import com.ixam97.carStatsViewer.ui.plot.graphics.PlotLinePaint
 import com.ixam97.carStatsViewer.ui.plot.graphics.PlotPaint
@@ -28,6 +37,7 @@ import com.ixam97.carStatsViewer.ui.plot.objects.PlotRange
 import com.ixam97.carStatsViewer.ui.plot.enums.*
 import com.ixam97.carStatsViewer.ui.views.GageView
 import com.ixam97.carStatsViewer.ui.views.PlotView
+import com.ixam97.carStatsViewer.ui.views.SnackbarWidget
 import com.ixam97.carStatsViewer.utils.*
 import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.coroutines.*
@@ -41,6 +51,8 @@ class MainActivity : FragmentActivity() {
         const val CONSUMPTION_DISTANCE_RESTRICTION = 10_000L
     }
 
+    private var appliedTheme = 0
+
     /** values and variables */
     private val appPreferences = CarStatsViewer.appPreferences
 
@@ -52,11 +64,7 @@ class MainActivity : FragmentActivity() {
             "Wh/km"
         ),
     )
-    private val consumptionPlotLinePaint  = PlotLinePaint(
-        PlotPaint.byColor(CarStatsViewer.appContext.getColor(R.color.primary_plot_color), PlotView.textSize),
-        PlotPaint.byColor(CarStatsViewer.appContext.getColor(R.color.secondary_plot_color), PlotView.textSize),
-        PlotPaint.byColor(CarStatsViewer.appContext.getColor(R.color.secondary_plot_color_alt), PlotView.textSize)
-    ) { appPreferences.consumptionPlotSecondaryColor }
+    private lateinit var consumptionPlotLinePaint: PlotLinePaint
 
     private val chargePlotLine = PlotLine(
         PlotLineConfiguration(
@@ -67,9 +75,9 @@ class MainActivity : FragmentActivity() {
         )
     )
     private val chargePlotLinePaint = PlotLinePaint(
-        PlotPaint.byColor(CarStatsViewer.appContext.getColor(R.color.charge_plot_color), PlotView.textSize),
-        PlotPaint.byColor(CarStatsViewer.appContext.getColor(R.color.secondary_plot_color), PlotView.textSize),
-        PlotPaint.byColor(CarStatsViewer.appContext.getColor(R.color.secondary_plot_color_alt), PlotView.textSize)
+        PlotPaint.byColor(CarStatsViewer.appContext.getColor(R.color.charge_plot_color), CarStatsViewer.appContext.resources.getDimension(R.dimen.reduced_font_size)),
+        PlotPaint.byColor(CarStatsViewer.appContext.getColor(R.color.secondary_plot_color), CarStatsViewer.appContext.resources.getDimension(R.dimen.reduced_font_size)),
+        PlotPaint.byColor(CarStatsViewer.appContext.getColor(R.color.secondary_plot_color_alt), CarStatsViewer.appContext.resources.getDimension(R.dimen.reduced_font_size))
     ) { appPreferences.chargePlotSecondaryColor }
 
     private lateinit var context: Context
@@ -93,6 +101,11 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
+
+        if (appliedTheme != appPreferences.colorTheme) {
+            finish()
+            startActivity(intent)
+        }
 
         // CarStatsViewer.dataProcessor.changeSelectedTrip(appPreferences.mainViewTrip + 1)
 
@@ -126,10 +139,22 @@ class MainActivity : FragmentActivity() {
         setSecondaryConsumptionPlotDimension(appPreferences.secondaryConsumptionDimension)
 
         setGageVisibilities(appPreferences.consumptionPlotVisibleGages, appPreferences.consumptionPlotVisibleGages)
+
+        main_secondary_dimension_indicator.background = if (appPreferences.consumptionPlotSecondaryColor) {
+            getColorFromAttribute(this, R.attr.tertiary_plot_color).toDrawable()
+        } else {
+            getColorFromAttribute(this, R.attr.secondary_plot_color).toDrawable()
+        }
+
     }
+
+    private lateinit var binding: ActivityMainBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        binding = ActivityMainBinding.inflate(LayoutInflater.from(this))
+        val view = binding.root
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -187,13 +212,17 @@ class MainActivity : FragmentActivity() {
                                 }
                             }
                             main_button_summary.isEnabled = false
+                            main_image_button_summary.isEnabled = false
                             main_button_history.isEnabled = false
                             main_button_history.setColorFilter(getColor(R.color.disabled_tint), PorterDuff.Mode.SRC_IN)
+                            main_image_button_summary.setColorFilter(getColor(R.color.disabled_tint), PorterDuff.Mode.SRC_IN)
                         } else if (it.speed <= .1 && moving) {
                             moving = false
                             main_button_summary.isEnabled = true
+                            main_image_button_summary.isEnabled = true
                             main_button_history.isEnabled = true
                             main_button_history.setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN)
+                            main_image_button_summary.setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN)
                         }
 
                         setUiVisibilities()
@@ -202,11 +231,10 @@ class MainActivity : FragmentActivity() {
             }
         }
 
-
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 CarStatsViewer.dataProcessor.currentChargingSessionDataFlow.collectLatest { chargingSession ->
-                    // InAppLogger.i("Charging update")
+                    // InAppLogger.i("########## Charging update ##########")
                     chargingSession?.let {
                         neoChargedEnergy = it.charged_energy
                         neoChargeTime = it.chargeTime
@@ -261,7 +289,7 @@ class MainActivity : FragmentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 CarStatsViewer.dataProcessor.selectedSessionDataFlow.collectLatest { session ->
-
+                    // InAppLogger.i("########## Session state changed ##########")
                     neoDistance = session?.driven_distance?:0.0
                     neoEnergy = session?.used_energy?:0.0
                     neoTime = session?.drive_time?:0
@@ -281,61 +309,45 @@ class MainActivity : FragmentActivity() {
 
                     session?.drivingPoints?.let { drivingPoints ->
                         val startIndex = consumptionPlotLine.getDataPointsSize()
+                        var prevDrivingPoint = consumptionPlotLine.lastItem()
+                        var lastItemIndex = drivingPoints.withIndex().find { it.value.driving_point_epoch_time == prevDrivingPoint?.EpochTime }?.index
+
+                        // InAppLogger.d("startIndex = $startIndex, lastItemIndex = $lastItemIndex, drivingPoints.size = ${drivingPoints.size}, prevDrivingPoint?.Distance = ${prevDrivingPoint?.Distance}")
+
+                        val selectedDistance = appPreferences.distanceUnit.asUnit(when (appPreferences.mainPrimaryDimensionRestriction) {
+                            1 -> 40_000L
+                            2 -> 100_000L
+                            else -> 20_000L
+                        })
+
                         when {
                             startIndex == 0 && drivingPoints.isEmpty() -> {
                                 consumptionPlotLine.reset()
                             }
-                            startIndex == 0 -> {
-                                consumptionPlotLine.reset()
-                                consumptionPlotLine.addDataPoints(DataConverters.consumptionPlotLineFromDrivingPoints(drivingPoints, 10_000f))
+                            startIndex == 0
+                            || (prevDrivingPoint?.Distance?:0f) > (selectedDistance * 2)
+                            || lastItemIndex == null
+                            || drivingPoints.size - lastItemIndex > 100 -> {
+                                InAppLogger.v("Rebuilding consumption plot")
+                                refreshConsumptionPlot(drivingPoints)
                             }
-                            startIndex != drivingPoints.size -> {
-                                var prevDrivingPoint = consumptionPlotLine.lastItem()
+                            startIndex > 0 -> {
+                                // if (lastItemIndex == null) lastItemIndex = drivingPoints.size
+                                // InAppLogger.v("Last plot item index: $lastItemIndex, drivingPoints size: ${drivingPoints.size}")
 
-                                for (i in drivingPoints.indices) {
-                                    if (i < startIndex) continue
-
+                                while (lastItemIndex < drivingPoints.size - 1) {
                                     prevDrivingPoint = consumptionPlotLine.addDataPoint(
                                         DataConverters.consumptionPlotLineItemFromDrivingPoint(
-                                            drivingPoints[i],
+                                            drivingPoints[lastItemIndex + 1],
                                             prevDrivingPoint
                                         )
                                     ) ?: prevDrivingPoint
+                                    lastItemIndex++
                                 }
                             }
                         }
-
                         main_consumption_plot.invalidate()
                     }
-
-                    /*
-                    session?.drivingPoints?.let { drivingPoints ->
-                        var sizeDelta = drivingPoints.size - consumptionPlotLine.getDataPointsSize()
-                        // InAppLogger.d("Size delta: $sizeDelta (${drivingPoints.size} vs. ${consumptionPlotLine.getDataPointsSize()}, $nonFiniteCounter non-finite)")
-                        if (sizeDelta in 1..9) {
-                            while (sizeDelta > 0) {
-                                val prevDrivingPoint = if (consumptionPlotLine.getDataPointsSize() > 0) {
-                                    consumptionPlotLine.getDataPoints(PlotDimensionX.DISTANCE).last()
-                                } else null
-                                consumptionPlotLine.addDataPoint(
-                                    DataConverters.consumptionPlotLineItemFromDrivingPoint(
-                                        drivingPoints[drivingPoints.size - sizeDelta],
-                                        prevDrivingPoint
-                                    )
-                                )
-                                sizeDelta --
-                            }
-                            main_consumption_plot.invalidate()
-                        } else if (sizeDelta > 10) {
-                            /** refresh entire plot for large numbers of new data Points */
-                            consumptionPlotLine.reset()
-                            consumptionPlotLine.addDataPoints(DataConverters.consumptionPlotLineFromDrivingPoints(drivingPoints, 10_000f))
-                            main_consumption_plot.invalidate()
-                        }
-                    }
-
-                     */
-                    // updateActivity()
                 }
             }
         }
@@ -350,13 +362,21 @@ class MainActivity : FragmentActivity() {
         InAppLogger.d("Main view created")
 
 
-        PlotView.textSize = resources.getDimension(R.dimen.reduced_font_size)
-        PlotView.xMargin = resources.getDimension(R.dimen.plot_x_margin).toInt()
-        PlotView.yMargin = resources.getDimension(R.dimen.plot_y_margin).toInt()
-        GageView.valueTextSize = resources.getDimension(R.dimen.gage_value_text_size)
-        GageView.descriptionTextSize = resources.getDimension(R.dimen.gage_desc_text_size)
+        // PlotView.textSize = resources.getDimension(R.dimen.reduced_font_size)
+        // InAppLogger.i("Plot text size: ${PlotView.textSize}")
+        // PlotView.xMargin = resources.getDimension(R.dimen.plot_x_margin).toInt()
+        // PlotView.yMargin = resources.getDimension(R.dimen.plot_y_margin).toInt()
+        // GageView.valueTextSize = resources.getDimension(R.dimen.gage_value_text_size)
+        // GageView.descriptionTextSize = resources.getDimension(R.dimen.gage_desc_text_size)
 
-        setContentView(R.layout.activity_main)
+        setContentViewAndTheme(this, R.layout.activity_main)
+        appliedTheme = appPreferences.colorTheme
+
+        consumptionPlotLinePaint  = PlotLinePaint(
+            PlotPaint.byColor(getColorFromAttribute(this, R.attr.primary_plot_color), CarStatsViewer.appContext.resources.getDimension(R.dimen.reduced_font_size)),
+            PlotPaint.byColor(getColorFromAttribute(this, R.attr.secondary_plot_color), CarStatsViewer.appContext.resources.getDimension(R.dimen.reduced_font_size)),
+            PlotPaint.byColor(getColorFromAttribute(this, R.attr.tertiary_plot_color), CarStatsViewer.appContext.resources.getDimension(R.dimen.reduced_font_size))
+        ) { appPreferences.consumptionPlotSecondaryColor }
 
         CarStatsViewer.typefaceMedium?.let {
             applyTypeface(main_activity)
@@ -364,8 +384,6 @@ class MainActivity : FragmentActivity() {
 
         setupDefaultUi()
         setUiEventListeners()
-
-        if (BuildConfig.FLAVOR != "dev") main_button_screenshot.visibility = View.GONE
 
         main_button_perf.isEnabled = false
         main_button_perf.setColorFilter(getColor(R.color.disabled_tint), PorterDuff.Mode.SRC_IN)
@@ -386,10 +404,22 @@ class MainActivity : FragmentActivity() {
 
     private fun setTripTypeIcon(tripType: Int) {
         when (tripType) {
-            TripType.MANUAL -> main_trip_type_icon.setImageDrawable(getDrawable(R.drawable.ic_hand))
-            TripType.SINCE_CHARGE -> main_trip_type_icon.setImageDrawable(getDrawable(R.drawable.ic_charger))
-            TripType.AUTO -> main_trip_type_icon.setImageDrawable(getDrawable(R.drawable.ic_day))
-            TripType.MONTH -> main_trip_type_icon.setImageDrawable(getDrawable(R.drawable.ic_month))
+            TripType.MANUAL -> {
+                main_trip_type_icon.setImageDrawable(getDrawable(R.drawable.ic_hand))
+                main_gage_trip_name?.text = resources.getStringArray(R.array.trip_type_names)[1]
+            }
+            TripType.SINCE_CHARGE -> {
+                main_trip_type_icon.setImageDrawable(getDrawable(R.drawable.ic_charger))
+                main_gage_trip_name.text = resources.getStringArray(R.array.trip_type_names)[2]
+            }
+            TripType.AUTO -> {
+                main_trip_type_icon.setImageDrawable(getDrawable(R.drawable.ic_day))
+                main_gage_trip_name.text = resources.getStringArray(R.array.trip_type_names)[3]
+            }
+            TripType.MONTH -> {
+                main_trip_type_icon.setImageDrawable(getDrawable(R.drawable.ic_month))
+                main_gage_trip_name.text = resources.getStringArray(R.array.trip_type_names)[4]
+            }
             else -> main_trip_type_icon.setImageDrawable(null)
         }
         main_button_reset.visibility = if (tripType == TripType.MANUAL) {
@@ -415,10 +445,21 @@ class MainActivity : FragmentActivity() {
             consumptionPlotLine.Configuration.Divider = distanceUnit.toFactor() * 10f
         }
 
+        main_distance_selector.run {
+            val unitString = appPreferences.distanceUnit.unit()
+            buttonNames = listOf(
+                "20 $unitString",
+                "40 $unitString",
+                "100 $unitString",
+                "",
+            )
+        }
+
         PlotGlobalConfiguration.updateDistanceUnit(distanceUnit)
-        main_consumption_plot.dimensionRestriction = distanceUnit.asUnit(
-            CONSUMPTION_DISTANCE_RESTRICTION
-        )
+        // main_consumption_plot.dimensionRestriction = distanceUnit.asUnit(
+        //     CONSUMPTION_DISTANCE_RESTRICTION
+        // )
+        setPrimaryConsumptionPlotDimension(appPreferences.mainPrimaryDimensionRestriction)
         main_consumption_plot.invalidate()
     }
 
@@ -456,13 +497,48 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    fun setSecondaryConsumptionPlotDimension(secondaryConsumptionDimension: Int) {
-        main_button_secondary_dimension.text = when (secondaryConsumptionDimension) {
-            1 -> getString(R.string.main_secondary_axis, getString(R.string.main_speed))
-            2 -> getString(R.string.main_secondary_axis, getString(R.string.main_SoC))
-            3 -> getString(R.string.main_secondary_axis, getString(R.string.plot_dimensionY_ALTITUDE))
-            else -> getString(R.string.main_secondary_axis, "-")
+    fun setPrimaryConsumptionPlotDimension(index: Int) {
+        InAppLogger.v("Changing primary plot restriction.")
+        val newDistance = when (index) {
+            1 -> 40_000L
+            2 -> 100_000L
+            else -> 20_000L
         }
+        main_consumption_plot.dimensionRestriction = appPreferences.distanceUnit.asUnit(newDistance)
+        refreshConsumptionPlot()
+    }
+    fun setSecondaryConsumptionPlotDimension(secondaryConsumptionDimension: Int) {
+
+        val constraintSet = ConstraintSet()
+        constraintSet.clone(main_side_bar)
+
+        when (secondaryConsumptionDimension) {
+            1 -> {
+                main_button_secondary_dimension.text = getString(R.string.main_secondary_axis, getString(R.string.main_speed))
+                constraintSet.connect(R.id.main_secondary_dimension_indicator, ConstraintSet.LEFT, R.id.main_image_button_speed, ConstraintSet.LEFT)
+                constraintSet.connect(R.id.main_secondary_dimension_indicator, ConstraintSet.RIGHT, R.id.main_image_button_speed, ConstraintSet.RIGHT)
+                main_secondary_dimension_indicator.isVisible = true
+            }
+            2 -> {
+                main_button_secondary_dimension.text = getString(R.string.main_secondary_axis, getString(R.string.main_SoC))
+                constraintSet.connect(R.id.main_secondary_dimension_indicator, ConstraintSet.LEFT, R.id.main_image_button_soc, ConstraintSet.LEFT)
+                constraintSet.connect(R.id.main_secondary_dimension_indicator, ConstraintSet.RIGHT, R.id.main_image_button_soc, ConstraintSet.RIGHT)
+                main_secondary_dimension_indicator.isVisible = true
+            }
+            3 -> {
+                main_button_secondary_dimension.text = getString(R.string.main_secondary_axis, getString(R.string.plot_dimensionY_ALTITUDE))
+                constraintSet.connect(R.id.main_secondary_dimension_indicator, ConstraintSet.LEFT, R.id.main_image_button_alt, ConstraintSet.LEFT)
+                constraintSet.connect(R.id.main_secondary_dimension_indicator, ConstraintSet.RIGHT, R.id.main_image_button_alt, ConstraintSet.RIGHT)
+                main_secondary_dimension_indicator.isVisible = true
+            }
+            else -> {
+                main_button_secondary_dimension.text = getString(R.string.main_secondary_axis, "-")
+                constraintSet.connect(R.id.main_secondary_dimension_indicator, ConstraintSet.LEFT, R.id.main_image_button_speed, ConstraintSet.RIGHT)
+                constraintSet.connect(R.id.main_secondary_dimension_indicator, ConstraintSet.RIGHT, R.id.main_image_button_speed, ConstraintSet.RIGHT)
+                main_secondary_dimension_indicator.visibility = View.GONE
+            }
+        }
+        constraintSet.applyTo(main_side_bar)
         main_consumption_plot.dimensionYSecondary = PlotDimensionY.IndexMap[secondaryConsumptionDimension]
         main_consumption_plot.invalidate()
     }
@@ -502,11 +578,13 @@ class MainActivity : FragmentActivity() {
         if (main_button_dismiss_charge_plot.isEnabled == neoChargePortConnected)
             main_button_dismiss_charge_plot.isEnabled = !neoChargePortConnected
         if (main_charge_layout.visibility == View.GONE && neoChargePortConnected) {
-            main_consumption_layout.visibility = View.GONE
-            main_charge_layout.visibility = View.VISIBLE
+            // main_consumption_layout.visibility = View.GONE
+            // main_charge_layout.visibility = View.VISIBLE
+            crossfade(main_consumption_layout, main_charge_layout)
         } else if (CarStatsViewer.dataProcessor.realTimeData.drivingState == DrivingState.DRIVE && main_charge_layout.visibility == View.VISIBLE) {
-            main_charge_layout.visibility = View.GONE
-            main_consumption_layout.visibility = View.VISIBLE
+            // main_charge_layout.visibility = View.GONE
+            // main_consumption_layout.visibility = View.VISIBLE
+            crossfade(main_charge_layout, main_consumption_layout)
         }
     }
 
@@ -554,9 +632,16 @@ class MainActivity : FragmentActivity() {
         main_consumption_plot.addPlotLine(consumptionPlotLine, consumptionPlotLinePaint)
 
         main_consumption_plot.dimension = PlotDimensionX.DISTANCE
-        main_consumption_plot.dimensionRestriction = appPreferences.distanceUnit.asUnit(
-            CONSUMPTION_DISTANCE_RESTRICTION
-        )
+        // main_consumption_plot.dimensionRestriction = appPreferences.distanceUnit.asUnit(
+        //     CONSUMPTION_DISTANCE_RESTRICTION
+        // )
+        setPrimaryConsumptionPlotDimension(appPreferences.mainPrimaryDimensionRestriction)
+
+        main_distance_selector.run {
+            selectedIndex = appPreferences.mainPrimaryDimensionRestriction
+                .coerceAtMost(2)
+                .coerceAtLeast(0)
+        }
         main_consumption_plot.dimensionSmoothing = 0.02f
         main_consumption_plot.dimensionSmoothingType = PlotDimensionSmoothingType.PERCENTAGE
         main_consumption_plot.sessionGapRendering = PlotSessionGapRendering.JOIN
@@ -575,14 +660,14 @@ class MainActivity : FragmentActivity() {
 
         main_power_gage.gageName = getString(R.string.main_gage_power)
         main_power_gage.gageUnit = "kW"
-        main_power_gage.primaryColor = getColor(R.color.polestar_orange)
+        main_power_gage.primaryColor = getColorFromAttribute(this, android.R.attr.colorControlActivated)
         main_power_gage.maxValue = if (appPreferences.consumptionPlotSingleMotor) 170f else 300f
         main_power_gage.minValue = if (appPreferences.consumptionPlotSingleMotor) -100f else -150f
         main_power_gage.setValue(0f)
 
         main_consumption_gage.gageName = getString(R.string.main_gage_consumption)
         main_consumption_gage.gageUnit = "kWh/100km"
-        main_consumption_gage.primaryColor = getColor(R.color.polestar_orange)
+        main_consumption_gage.primaryColor = getColorFromAttribute(this, android.R.attr.colorControlActivated)
         main_consumption_gage.minValue = -30f
         main_consumption_gage.maxValue = 60f
         main_consumption_gage.setValue(0f)
@@ -625,7 +710,37 @@ class MainActivity : FragmentActivity() {
             setSecondaryConsumptionPlotDimension(currentIndex)
         }
 
+        main_image_button_speed.setOnClickListener {
+            var currentIndex = appPreferences.secondaryConsumptionDimension
+            currentIndex = if (currentIndex == 1) 0 else 1
+            setSecondaryConsumptionPlotDimension(currentIndex)
+            appPreferences.secondaryConsumptionDimension = currentIndex
+        }
+
+        main_image_button_soc.setOnClickListener {
+            var currentIndex = appPreferences.secondaryConsumptionDimension
+            currentIndex = if (currentIndex == 2) 0 else 2
+            setSecondaryConsumptionPlotDimension(currentIndex)
+            appPreferences.secondaryConsumptionDimension = currentIndex
+        }
+
+        main_image_button_alt.setOnClickListener {
+            var currentIndex = appPreferences.secondaryConsumptionDimension
+            currentIndex = if (currentIndex == 3) 0 else 3
+            setSecondaryConsumptionPlotDimension(currentIndex)
+            appPreferences.secondaryConsumptionDimension = currentIndex
+        }
+
+        main_distance_selector.setOnIndexChangedListener {
+            appPreferences.mainPrimaryDimensionRestriction = main_distance_selector.selectedIndex
+            setPrimaryConsumptionPlotDimension(appPreferences.mainPrimaryDimensionRestriction)
+        }
+
         main_button_summary.setOnClickListener {
+            openSummaryFragment()
+        }
+
+        main_image_button_summary.setOnClickListener {
             openSummaryFragment()
         }
 
@@ -634,22 +749,12 @@ class MainActivity : FragmentActivity() {
         }
 
         main_button_dismiss_charge_plot.setOnClickListener {
-            main_charge_layout.visibility = View.GONE
-            main_consumption_layout.visibility = View.VISIBLE
+            // main_charge_layout.visibility = View.GONE
+            // main_consumption_layout.visibility = View.VISIBLE
+            crossfade(main_charge_layout, main_consumption_layout)
             main_consumption_plot.invalidate()
             // DataManager.chargedEnergy = 0f
             // DataManager.chargeTime = 0L
-        }
-
-        main_button_screenshot.setOnClickListener {
-            // throw Exception("Intentional crash")
-            InAppLogger.i("Debug")
-            lifecycleScope.launch {
-                CarStatsViewer.screenshotBitmap = master_layout.drawToBitmap()
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Screenshot taken", Toast.LENGTH_SHORT).show()
-                }
-            }
         }
 
         main_button_history.setOnClickListener {
@@ -706,5 +811,46 @@ class MainActivity : FragmentActivity() {
             }
         val alert = builder.create()
         alert.show()
+    }
+
+    private fun refreshConsumptionPlot(drivingPoints: List<DrivingPoint> = emptyList()) {
+        InAppLogger.d("Refreshing entire consumption plot.")
+        var localDrivingPoints = drivingPoints
+        if (drivingPoints.isEmpty()) {
+            localDrivingPoints = CarStatsViewer.dataProcessor.selectedSessionDataFlow.value?.drivingPoints?: emptyList()
+        }
+        consumptionPlotLine.reset()
+        if (localDrivingPoints.isEmpty()) return
+        lifecycleScope.launch {
+            val newDistance = when (appPreferences.mainPrimaryDimensionRestriction) {
+                1 -> 40_000L
+                2 -> 100_000L
+                else -> 20_000L
+            }
+            val dataPoints = DataConverters.consumptionPlotLineFromDrivingPoints(localDrivingPoints, appPreferences.distanceUnit.asUnit(newDistance.toFloat()))
+            runOnUiThread {
+                consumptionPlotLine.addDataPoints(dataPoints)
+            }
+        }
+    }
+
+    private fun crossfade(fromView: View, toView: View) {
+        toView.apply {
+            alpha = 0f
+            isVisible = true
+            animate()
+                .alpha(1f)
+                .setDuration(200L)
+                .setListener(null)
+        }
+
+        fromView.animate()
+            .alpha(0f)
+            .setDuration(200L)
+            .setListener(object: AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    fromView.isVisible = false
+                }
+            })
     }
 }

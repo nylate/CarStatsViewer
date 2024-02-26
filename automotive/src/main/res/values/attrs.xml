@@ -3,6 +3,8 @@
     <declare-styleable name="MultiSelectWidget">
         <attr name="title" format="string"/>
         <attr name="title_width" format="dimension"/>
+        <attr name="primary_color" format="color"/>
+        <attr name="secondary_color" format="color"/>
     </declare-styleable>
     <declare-styleable name="ApiRowWidget">
         <attr name="api_name" format="string"/>
@@ -25,4 +27,25 @@
         <attr name="textButton3" format="string"/>
         <attr name="textButton4" format="string"/>
     </declare-styleable>
+    <declare-styleable name="GageView">
+        <attr name="descriptionTextSize" format="dimension"/>
+        <attr name="valueTextSize" format="dimension"/>
+    </declare-styleable>
+    <declare-styleable name="PlotView">
+        <attr name="baseTextSize" format="dimension"/>
+        <attr name="xMargin" format="dimension"/>
+        <attr name="yMargin" format="dimension"/>
+    </declare-styleable>
+
+    <attr name="action_bar_line" format="reference" />
+    <attr name="menu_standard_switch_style" format="reference" />
+    <attr name="activity_background" format="color" />
+    <attr name="activity_background_variant" format="color" />
+    <attr name="dialog_background" format="color" />
+    <attr name="widget_background" format="color" />
+
+    <!-- Colors to be used in plots -->
+    <attr name="primary_plot_color" format="color" />
+    <attr name="secondary_plot_color" format="color" />
+    <attr name="tertiary_plot_color" format="color" />
 </resources>

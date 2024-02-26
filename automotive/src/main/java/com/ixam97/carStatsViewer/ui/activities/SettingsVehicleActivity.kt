@@ -3,21 +3,23 @@ package com.ixam97.carStatsViewer.ui.activities
 import android.app.Activity
 import android.os.Bundle
 import android.view.View
+import androidx.fragment.app.FragmentActivity
 import com.ixam97.carStatsViewer.CarStatsViewer
 import com.ixam97.carStatsViewer.R
 import com.ixam97.carStatsViewer.utils.VehicleDefinitions
 import com.ixam97.carStatsViewer.utils.applyTypeface
+import com.ixam97.carStatsViewer.utils.setContentViewAndTheme
 import kotlinx.android.synthetic.main.activity_settings_vehicle.*
 import kotlinx.coroutines.*
 
-class SettingsVehicleActivity : Activity() {
+class SettingsVehicleActivity : FragmentActivity() {
 
     val appPreferences = CarStatsViewer.appPreferences
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        setContentView(R.layout.activity_settings_vehicle)
+        setContentViewAndTheme(this, R.layout.activity_settings_vehicle)
 
         CarStatsViewer.typefaceMedium?.let {
             applyTypeface(settings_vehicle_activity)

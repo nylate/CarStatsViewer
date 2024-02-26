@@ -3,6 +3,7 @@ package com.ixam97.carStatsViewer.dataCollector
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
+import android.car.VehicleUnit
 import android.content.Intent
 import android.location.Location
 import android.os.IBinder
@@ -18,6 +19,7 @@ import com.ixam97.carStatsViewer.dataProcessor.DataProcessor
 import com.ixam97.carStatsViewer.emulatorMode
 import com.ixam97.carStatsViewer.locationClient.DefaultLocationClient
 import com.ixam97.carStatsViewer.locationClient.LocationClient
+import com.ixam97.carStatsViewer.utils.DistanceUnitEnum
 import com.ixam97.carStatsViewer.utils.InAppLogger
 import com.ixam97.carStatsViewer.utils.StringFormatters
 import com.ixam97.carStatsViewer.utils.WatchdogState
@@ -71,7 +73,7 @@ class DataCollector: Service() {
         foregroundServiceNotification = Notification.Builder(applicationContext, CarStatsViewer.FOREGROUND_CHANNEL_ID)
             // .setContentTitle(getString(R.string.app_name))
             .setContentTitle(getString(R.string.foreground_service_info))
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.mipmap.ic_launcher_notification)
             .setOngoing(true)
 
         foregroundServiceNotification.setContentIntent(
@@ -106,7 +108,11 @@ class DataCollector: Service() {
         dataProcessor.staticVehicleData = dataProcessor.staticVehicleData.copy(
             batteryCapacity = carPropertiesClient.getFloatProperty(CarProperties.INFO_EV_BATTERY_CAPACITY),
             vehicleMake = carPropertiesClient.getStringProperty(CarProperties.INFO_MAKE),
-            modelName = carPropertiesClient.getStringProperty(CarProperties.INFO_MODEL)
+            modelName = carPropertiesClient.getStringProperty(CarProperties.INFO_MODEL),
+            distanceUnit = when (carPropertiesClient.getIntProperty(CarProperties.DISTANCE_DISPLAY_UNITS)) {
+                VehicleUnit.MILE -> DistanceUnitEnum.MILES
+                else -> DistanceUnitEnum.KM
+            }
         )
 
         dataProcessor.staticVehicleData.let {
@@ -117,6 +123,8 @@ class DataCollector: Service() {
             Toast.makeText(this, "Emulator Mode", Toast.LENGTH_LONG).show()
             emulatorMode = true
         }
+
+        CarStatsViewer.appPreferences.distanceUnit = if (!emulatorMode) dataProcessor.staticVehicleData.distanceUnit else DistanceUnitEnum.KM
 
         InAppLogger.i("[NEO] Google API availability: ${GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(this) == ConnectionResult.SUCCESS}")
 
@@ -192,23 +200,34 @@ class DataCollector: Service() {
 
         serviceScope.launch {
             // Notification updater
+            var simpleNotification = false
             while (true) {
                 delay(2_500)
                 if (!CarStatsViewer.appPreferences.notifications) {
                     foregroundServiceNotification
+                        // .setSmallIcon(R.mipmap.ic_launcher_notification)
                         .setContentTitle(getString(R.string.foreground_service_info))
                         .setContentText("")
                 } else {
                     foregroundServiceNotification
                         .setContentTitle(getString(R.string.notification_title) + " " + resources.getStringArray(R.array.trip_type_names)[CarStatsViewer.appPreferences.mainViewTrip + 1])
+                        // .setSmallIcon(R.drawable.ic_notification_diagram)
                         .setContentText(String.format(
                             "Dist.: %s, Cons.: %s, Speed: %s",
                             StringFormatters.getTraveledDistanceString(CarStatsViewer.dataProcessor.selectedSessionDataFlow.value?.driven_distance?.toFloat()?:0f),
                             StringFormatters.getAvgConsumptionString(CarStatsViewer.dataProcessor.selectedSessionDataFlow.value?.used_energy?.toFloat()?:0f, CarStatsViewer.dataProcessor.selectedSessionDataFlow.value?.driven_distance?.toFloat()?:0f),
                             StringFormatters.getAvgSpeedString(CarStatsViewer.dataProcessor.selectedSessionDataFlow.value?.driven_distance?.toFloat()?:0f, CarStatsViewer.dataProcessor.selectedSessionDataFlow.value?.drive_time?:0)
                         ))
+                    simpleNotification = false
                 }
-                CarStatsViewer.notificationManager.notify(CarStatsViewer.FOREGROUND_NOTIFICATION_ID + 10, foregroundServiceNotification.build())
+                if (!simpleNotification) {
+                    simpleNotification = !CarStatsViewer.appPreferences.notifications
+                    CarStatsViewer.notificationManager.notify(
+                        CarStatsViewer.FOREGROUND_NOTIFICATION_ID + 10,
+                        foregroundServiceNotification.build()
+                    )
+                    InAppLogger.v("Updating notification")
+                }
             }
         }
 

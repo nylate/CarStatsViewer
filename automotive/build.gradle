@@ -10,12 +10,13 @@ android {
     defaultConfig {
         minSdkVersion 29
         targetSdkVersion 33
-        versionCode 168
-        versionName "0.25.1.0011"
+        versionCode 202
+        versionName "0.26.0.0010"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
     flavorDimensions "version"
+
     productFlavors {
         stable {
             dimension "version"
@@ -33,6 +34,10 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+    }
+
+    buildFeatures {
+        viewBinding true
     }
 
     packagingOptions {

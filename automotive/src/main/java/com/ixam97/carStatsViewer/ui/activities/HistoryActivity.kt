@@ -8,6 +8,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.widget.CheckBox
 import android.widget.DatePicker
+import android.widget.FrameLayout
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.commit
 import androidx.lifecycle.lifecycleScope
@@ -18,11 +19,19 @@ import com.ixam97.carStatsViewer.database.tripData.DrivingSession
 import com.ixam97.carStatsViewer.ui.fragments.SummaryFragment
 import com.ixam97.carStatsViewer.utils.InAppLogger
 import com.ixam97.carStatsViewer.adapters.TripHistoryAdapter
+import com.ixam97.carStatsViewer.database.tripData.DrivingPoint
+import com.ixam97.carStatsViewer.liveDataApi.LiveDataApi
+import com.ixam97.carStatsViewer.liveDataApi.http.HttpLiveData
+import com.ixam97.carStatsViewer.ui.views.SnackbarWidget
 import com.ixam97.carStatsViewer.ui.views.TripHistoryRowWidget
 import com.ixam97.carStatsViewer.utils.applyTypeface
+import com.ixam97.carStatsViewer.utils.setContentViewAndTheme
 import kotlinx.android.synthetic.main.activity_history.*
 import kotlinx.coroutines.*
 import java.util.*
+import kotlin.math.ceil
+import kotlin.math.min
+import kotlin.math.roundToInt
 
 class HistoryActivity  : FragmentActivity() {
 
@@ -71,7 +80,7 @@ class HistoryActivity  : FragmentActivity() {
 
         context = applicationContext
 
-        setContentView(R.layout.activity_history)
+        setContentViewAndTheme(this, R.layout.activity_history)
 
         history_trips_recycler_view.adapter = tripsAdapter
         history_trips_recycler_view.layoutManager = LinearLayoutManager(this@HistoryActivity)
@@ -99,6 +108,10 @@ class HistoryActivity  : FragmentActivity() {
 
         CarStatsViewer.typefaceMedium?.let {
             applyTypeface(history_activity)
+        }
+
+        history_button_upload.setOnClickListener {
+            openUploadDialog()
         }
 
     }
@@ -205,6 +218,11 @@ class HistoryActivity  : FragmentActivity() {
             .setCancelable(true)
             .setPositiveButton(getString(R.string.history_dialog_delete_confirm)) {_,_->
                 tripsAdapter.deleteTrip(session, position)
+                SnackbarWidget.Builder(this@HistoryActivity, "Trip has been deleted.")
+                    .setDuration(3000)
+                    .setButton("OK")
+                    .setStartDrawable(R.drawable.ic_delete)
+                    .show()
             }
             .setNegativeButton(getString(R.string.dialog_reset_cancel)) { dialog, _ ->
                 dialog.cancel()
@@ -224,6 +242,7 @@ class HistoryActivity  : FragmentActivity() {
             .setCancelable(true)
             .setPositiveButton(getString(R.string.history_dialog_multi_delete_delete, selectedIds.size.toString())) {_,_->
                 lifecycleScope.launch { withContext(Dispatchers.IO) {
+                    val numSelected = selectedIds.size
                     runOnUiThread { trip_history_progress_bar.visibility = View.VISIBLE }
                     selectedIds.forEach {
                         CarStatsViewer.tripDataSource.deleteDrivingSessionById(it)
@@ -233,6 +252,11 @@ class HistoryActivity  : FragmentActivity() {
                     runOnUiThread {
                         multiSelectMode = false
                         trip_history_progress_bar.visibility = View.GONE
+                        SnackbarWidget.Builder(this@HistoryActivity, "$numSelected trips have been deleted.")
+                            .setDuration(3000)
+                            .setButton("OK")
+                            .setStartDrawable(R.drawable.ic_delete)
+                            .show()
                     }
                 }}
             }
@@ -341,5 +365,112 @@ class HistoryActivity  : FragmentActivity() {
                 history_button_filters.setImageDrawable(getDrawable(R.drawable.ic_filter))
             }
         }
+    }
+
+    private fun openUploadDialog() {
+        var uploadDialog = AlertDialog.Builder(this@HistoryActivity).apply {
+            setTitle(R.string.history_dialog_upload_title)
+            // setMessage("You are about to upload the entire local database to the API endpoint"+
+            //         " specified in the HTTP webhook settings!\n\nMake sure you have reset the"+
+            //         " data on the server before this to prevent data duplication. If supported by" +
+            //         " the API endpoint this will happen automatically \n\n" +
+            //         " This action may take a long time to finish depending on the database size." +
+            //         " Please remain on this page until a notification is shown!")
+            setMessage(R.string.history_dialog_upload_message)
+            setNegativeButton(R.string.dialog_reset_cancel) { _,_ ->
+
+            }
+            setPositiveButton(R.string.history_dialog_upload_upload_button) { _, _ ->
+                uploadDatabase()
+            }
+        }
+        uploadDialog.show()
+    }
+
+    private fun uploadDatabase() {
+        val chunkSize = 250
+        CoroutineScope(Dispatchers.IO).launch {
+            val waitSnack = SnackbarWidget.Builder(this@HistoryActivity, "Upload in progress, 0%")
+                .build()
+            runOnUiThread {
+                this@HistoryActivity.window.findViewById<FrameLayout>(android.R.id.content).addView(waitSnack)
+            }
+            val drivingPoints = CarStatsViewer.tripDataSource.getAllDrivingPoints()
+            InAppLogger.i("[HIST] Done loading ${drivingPoints.size} driving points")
+            val chargingSessions = CarStatsViewer.tripDataSource.getAllChargingSessions()
+            InAppLogger.i("[HIST] Done loading ${chargingSessions.size} charging sessions")
+
+            val drivingPointsChunks = ceil(drivingPoints.size.toFloat() / chunkSize).roundToInt()
+            InAppLogger.i("Divided ${drivingPoints.size} driving points into to $drivingPointsChunks chunks")
+            val chargingSessionsSize = chargingSessions.size
+            val totalParts = drivingPointsChunks + chargingSessionsSize
+
+            var result: LiveDataApi.ConnectionStatus? = null
+
+            for (i in 0 until drivingPointsChunks) {
+                result = (CarStatsViewer.liveDataApis[1] as HttpLiveData).sendWithDrivingPoint(
+                    CarStatsViewer.dataProcessor.realTimeData,
+                    drivingPoints.slice(chunkSize * i..min(chunkSize * (i+1), drivingPoints.size - 1))
+                )
+                val percentage = (((i + 1).toFloat() / totalParts) * 100).roundToInt()
+                if (result == LiveDataApi.ConnectionStatus.CONNECTED) {
+                    InAppLogger.v("Chunk $i transferred, $percentage%")
+                    runOnUiThread {
+                        waitSnack.updateMessage("Upload in progress, $percentage%")
+                        waitSnack.setProgressBarPercent(percentage)
+                    }
+                } else {
+                    InAppLogger.e("Chunk $i failed..")
+                    break
+                }
+            }
+
+            for (i in 0 until chargingSessionsSize) {
+                result = (CarStatsViewer.liveDataApis[1] as HttpLiveData).sendWithDrivingPoint(
+                    CarStatsViewer.dataProcessor.realTimeData,
+                    chargingSessions = chargingSessions.slice(setOf(i))
+                )
+                val percentage = (((i + 1 + drivingPointsChunks).toFloat() / totalParts) * 100).roundToInt()
+                if (result == LiveDataApi.ConnectionStatus.CONNECTED) {
+                    InAppLogger.v("Charging session $i transferred, $percentage%")
+                    runOnUiThread {
+                        waitSnack.updateMessage("Upload in progress, $percentage%")
+                        waitSnack.setProgressBarPercent(percentage)
+                    }
+                } else {
+                    InAppLogger.e("Charging session $i failed..")
+                    break
+                }
+            }
+/*
+            val result = (CarStatsViewer.liveDataApis[1] as HttpLiveData).sendWithDrivingPoint(
+                CarStatsViewer.dataProcessor.realTimeData,
+                drivingPoints,
+                chargingSessions
+            )
+
+ */
+
+            runOnUiThread {
+                this@HistoryActivity.window.findViewById<FrameLayout>(android.R.id.content).removeView(waitSnack)
+                when (result) {
+                    LiveDataApi.ConnectionStatus.CONNECTED, LiveDataApi.ConnectionStatus.LIMITED -> {
+                        SnackbarWidget.Builder(this@HistoryActivity, "Database uploaded successfully.")
+                            .setIsError(false)
+                            .setDuration(3000)
+                            .setStartDrawable(R.drawable.ic_upload)
+                            .show()
+                    }
+                    else ->{
+                        SnackbarWidget.Builder(this@HistoryActivity, "Database upload failed.")
+                            .setIsError(true)
+                            .setDuration(3000)
+                            .show()
+                    }
+                }
+            }
+
+        }
+
     }
 }

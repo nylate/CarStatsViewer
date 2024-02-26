@@ -1,21 +1,35 @@
 package com.ixam97.carStatsViewer.dataProcessor
 
+import android.app.Notification
+import android.app.PendingIntent
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.core.graphics.drawable.toBitmap
+import com.ixam97.carStatsViewer.AutoStartReceiver
 import com.ixam97.carStatsViewer.CarStatsViewer
 import com.ixam97.carStatsViewer.Defines
+import com.ixam97.carStatsViewer.R
 import com.ixam97.carStatsViewer.carPropertiesClient.CarProperties
 import com.ixam97.carStatsViewer.carPropertiesClient.CarPropertiesData
 import com.ixam97.carStatsViewer.utils.TimeTracker
 import com.ixam97.carStatsViewer.database.tripData.*
 import com.ixam97.carStatsViewer.emulatorMode
 import com.ixam97.carStatsViewer.emulatorPowerSign
+import com.ixam97.carStatsViewer.liveDataApi.http.HttpLiveData
 import com.ixam97.carStatsViewer.ui.plot.enums.PlotLineMarkerType
 import com.ixam97.carStatsViewer.utils.InAppLogger
 import com.ixam97.carStatsViewer.utils.Ticker
 // import com.ixam97.carStatsViewer.utils.TimestampSynchronizer
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.update
 import java.util.*
 import kotlin.math.absoluteValue
 import kotlin.math.roundToInt
@@ -49,7 +63,10 @@ class DataProcessor {
      * List of local copies of the current trips. Used for storing sum values and saving them to
      * disk less frequently. This should prevent hiccups when adding sums of distance and energy.
      */
-    private var localSessions: MutableList<DrivingSession> = mutableListOf()
+    // private var localSessions: MutableList<DrivingSession> = mutableListOf()
+
+    private val _localSessionsState = MutableStateFlow<MutableList<DrivingSession>>(mutableListOf())
+    val localSessionsState: StateFlow<MutableList<DrivingSession>> = _localSessionsState.asStateFlow()
 
     private var localChargingSession: ChargingSession? = null
 
@@ -114,14 +131,17 @@ class DataProcessor {
          * updateDrivingDataPoint as well!
          */
         return CoroutineScope(Dispatchers.IO).launch {
-            localSessions.clear()
-            CarStatsViewer.tripDataSource.getActiveDrivingSessionsIds().forEach { sessionId ->
-                CarStatsViewer.tripDataSource.getFullDrivingSession(sessionId).let { session ->
-                    localSessions.add(session)
-                    if (session.session_type == CarStatsViewer.appPreferences.mainViewTrip + 1) {
-                        _selectedSessionDataFlow.value = session
+            _localSessionsState.update { localSessions ->
+                localSessions.clear()
+                CarStatsViewer.tripDataSource.getActiveDrivingSessionsIds().forEach { sessionId ->
+                    CarStatsViewer.tripDataSource.getFullDrivingSession(sessionId).let { session ->
+                        localSessions.add(session)
+                        if (session.session_type == CarStatsViewer.appPreferences.mainViewTrip + 1) {
+                            _selectedSessionDataFlow.value = session
+                        }
                     }
                 }
+                localSessions
             }
         }
     }
@@ -282,6 +302,25 @@ class DataProcessor {
 
         if (ignitionState != prevIgnition) {
             InAppLogger.i("[NEO] Ignition switched from ${IgnitionState.nameMap[prevIgnition]} to ${IgnitionState.nameMap[ignitionState]}")
+            if (prevIgnition == IgnitionState.START && ignitionState <= IgnitionState.ON && CarStatsViewer.appPreferences.phoneNotification) {
+
+                val phoneNotification = Notification.Builder(
+                    CarStatsViewer.appContext,
+                    CarStatsViewer.RESTART_CHANNEL_ID
+                )
+                    .setContentTitle(CarStatsViewer.appContext.getString(R.string.notification_phone))
+                    .setContentText(CarStatsViewer.appContext.getString(R.string.notification_valuables))
+                    .setSmallIcon(R.drawable.ic_notification_phone)
+                    .setOngoing(false)
+                    .setCategory(Notification.CATEGORY_CALL)
+                    .build()
+
+                CarStatsViewer.notificationManager.notify(99, phoneNotification)
+            }
+            if (prevIgnition < IgnitionState.ON && ignitionState >= IgnitionState.ON) {
+                CarStatsViewer.notificationManager.cancel(99)
+            }
+
         }
 
         if (drivingState != prevState) {
@@ -455,19 +494,26 @@ class DataProcessor {
             while (!localSessionsAccess) {
                 InAppLogger.w("WAITING for local session access")
             }
-            localSessions.forEachIndexed { index, session ->
-                val drivingPoints = session.drivingPoints?.toMutableList()
-                drivingPoints?.add(drivingPoint)
-                localSessions[index] = session.copy(last_edited_epoch_time = System.currentTimeMillis())
-                localSessions[index].drivingPoints = drivingPoints
-                if (session.session_type == CarStatsViewer.appPreferences.mainViewTrip + 1) {
-                    _selectedSessionDataFlow.value = localSessions[index]
+            _localSessionsState.update { localSessions ->
+                localSessions.forEachIndexed { index, session ->
+                    val drivingPoints = session.drivingPoints?.toMutableList()
+                    drivingPoints?.add(drivingPoint)
+                    localSessions[index] = session.copy(last_edited_epoch_time = System.currentTimeMillis())
+                    localSessions[index].drivingPoints = drivingPoints
+                    if (session.session_type == CarStatsViewer.appPreferences.mainViewTrip + 1) {
+                        _selectedSessionDataFlow.value = localSessions[index]
+                    }
                 }
+                localSessions
             }
+
 
             writeTripsToDatabase()
             InAppLogger.d("[NEO] Driving point written: ${mDrivenDistance.toFloat()} m, ${mUsedEnergy.toFloat()} Wh")
 
+            CoroutineScope(Dispatchers.IO).launch {
+                (CarStatsViewer.liveDataApis[1] as HttpLiveData).sendWithDrivingPoint(realTimeData, listOf(drivingPoint))
+            }
         }
     }
 
@@ -496,19 +542,23 @@ class DataProcessor {
      * Update driving trip data flow for UI.
      */
     private fun newDrivingDeltas(distanceDelta: Double, energyDelta: Double) {
-        localSessions.forEachIndexed {index, localSession ->
-            val drivingPoints = localSession.drivingPoints
-            localSessions[index] = localSession.copy(
-                drive_time = timerMap[localSession.session_type]?.getTime()?:0L,
-                driven_distance = localSession.driven_distance + distanceDelta,
-                used_energy = localSession.used_energy + energyDelta,
-                last_edited_epoch_time = System.currentTimeMillis()
-            )
-            localSessions[index].drivingPoints = drivingPoints
-            if (localSession.session_type == CarStatsViewer.appPreferences.mainViewTrip + 1) {
-                _selectedSessionDataFlow.value = localSessions[index]
+        _localSessionsState.update { localSessions ->
+            localSessions.forEachIndexed {index, localSession ->
+                val drivingPoints = localSession.drivingPoints
+                localSessions[index] = localSession.copy(
+                    drive_time = timerMap[localSession.session_type]?.getTime()?:0L,
+                    driven_distance = localSession.driven_distance + distanceDelta,
+                    used_energy = localSession.used_energy + energyDelta,
+                    last_edited_epoch_time = System.currentTimeMillis()
+                )
+                localSessions[index].drivingPoints = drivingPoints
+                if (localSession.session_type == CarStatsViewer.appPreferences.mainViewTrip + 1) {
+                    _selectedSessionDataFlow.value = localSessions[index]
+                }
             }
+            localSessions
         }
+
     }
 
     private suspend fun writeTripsToDatabase() {
@@ -516,7 +566,7 @@ class DataProcessor {
             while (!localSessionsAccess) {
                 InAppLogger.w("WAITING for local session access")
             }
-            localSessions.forEach { localSession ->
+            localSessionsState.value.forEach {localSession ->
                 CarStatsViewer.tripDataSource.updateDrivingSession(localSession)
             }
         } catch (e: Exception) {
@@ -569,11 +619,18 @@ class DataProcessor {
             // } else if ((!emulatorMode && timestampSynchronizer.getSystemTimeFromNanosTimestamp(carPropertiesData.CurrentPower.timestamp) < System.currentTimeMillis() - 500) || (emulatorMode && timestampSynchronizer.getSystemTimeFromNanosTimestamp(carPropertiesData.CurrentSpeed.timestamp) < System.currentTimeMillis() - 500)) {
             //     InAppLogger.w("[NEO] Power value is too old!")
             } else {
+                InAppLogger.d("[CHARGING CURVE] Before time check: ")
+                InAppLogger.d("[CHARGING CURVE] SoC timestamp: ${carPropertiesData.BatteryLevel.timestamp}")
+                InAppLogger.d("[CHARGING CURVE] Power timestamp: ${carPropertiesData.CurrentPower.timestamp}")
                 // while ((!emulatorMode && timestampSynchronizer.getSystemTimeFromNanosTimestamp(carPropertiesData.CurrentPower.timestamp) < System.currentTimeMillis() - 500) || (emulatorMode && timestampSynchronizer.getSystemTimeFromNanosTimestamp(carPropertiesData.CurrentSpeed.timestamp) < System.currentTimeMillis() - 500)) {
                 while ((!emulatorMode && carPropertiesData.CurrentPower.timestamp < System.nanoTime() - 500_000_000) || (emulatorMode && carPropertiesData.CurrentSpeed.timestamp < System.nanoTime() - 500_000_000)) {
                     InAppLogger.w("[NEO] Power value is too old!")
                     delay(250)
                 }
+
+                InAppLogger.d("[CHARGING CURVE] After time check: ")
+                InAppLogger.d("[CHARGING CURVE] SoC timestamp: ${carPropertiesData.BatteryLevel.timestamp}")
+                InAppLogger.d("[CHARGING CURVE] Power timestamp: ${carPropertiesData.CurrentPower.timestamp}")
 
                 val currentTime = System.currentTimeMillis()
                 // InAppLogger.d("Time delta: ${currentTime - lastChargingPointTime}")
@@ -621,8 +678,8 @@ class DataProcessor {
 
     /** Change the selected trip type to update the trip data flow with */
     fun changeSelectedTrip(tripType: Int) {
-        if (localSessions.isNotEmpty())
-            _selectedSessionDataFlow.value = localSessions.first{it.session_type == tripType}
+        if (localSessionsState.value.isNotEmpty())
+            _selectedSessionDataFlow.value = localSessionsState.value.first{it.session_type == tripType}
     }
 
     suspend fun resetTrip(tripType: Int, drivingState: Int) {
@@ -725,6 +782,9 @@ class DataProcessor {
                 localChargingSession?.chargingPoints = chargingPoints
             }
             _currentChargingSessionDataFlow.value = localChargingSession
+            CoroutineScope(Dispatchers.IO).launch {
+                (CarStatsViewer.liveDataApis[1] as HttpLiveData).sendWithDrivingPoint(realTimeData, chargingSessions = if (localChargingSession == null) null else listOf(localChargingSession!!))
+            }
             InAppLogger.i("[NEO] Charging session with ID ${localChargingSession?.charging_session_id} ended")
         }
     }

@@ -9,18 +9,20 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toolbar.LayoutParams
+import androidx.fragment.app.FragmentActivity
 import com.airbnb.paris.extensions.style
 import com.ixam97.carStatsViewer.CarStatsViewer
 import com.ixam97.carStatsViewer.R
 import com.ixam97.carStatsViewer.utils.applyTypeface
+import com.ixam97.carStatsViewer.utils.setContentViewAndTheme
 import com.mikepenz.aboutlibraries.Libs
 import com.mikepenz.aboutlibraries.util.withContext
 import kotlinx.android.synthetic.main.activity_libs.*
 
-class LibsActivity: Activity() {
+class LibsActivity: FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_libs)
+        setContentViewAndTheme(this, R.layout.activity_libs)
 
         libs_button_back.setOnClickListener {
             finish()

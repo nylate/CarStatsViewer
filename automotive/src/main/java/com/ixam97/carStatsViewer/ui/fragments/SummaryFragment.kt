@@ -1,9 +1,13 @@
 package com.ixam97.carStatsViewer.ui.fragments
 
 import android.app.AlertDialog
+import android.content.Context
 import android.graphics.Color
 import android.graphics.PorterDuff
 import android.os.Bundle
+import android.view.ContextThemeWrapper
+import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.widget.SeekBar
 import androidx.core.graphics.drawable.toDrawable
@@ -29,7 +33,9 @@ import com.ixam97.carStatsViewer.ui.plot.enums.*
 import com.ixam97.carStatsViewer.utils.DataConverters
 import com.ixam97.carStatsViewer.utils.StringFormatters
 import com.ixam97.carStatsViewer.ui.views.PlotView
+import com.ixam97.carStatsViewer.utils.InAppLogger
 import com.ixam97.carStatsViewer.utils.applyTypeface
+import com.ixam97.carStatsViewer.utils.getColorFromAttribute
 import kotlinx.android.synthetic.main.fragment_summary.*
 import kotlinx.coroutines.*
 import java.util.*
@@ -67,16 +73,12 @@ class SummaryFragment() : Fragment(R.layout.fragment_summary) {
         ),
     )
 
-    private val consumptionPlotLinePaint = PlotLinePaint(
-    PlotPaint.byColor(applicationContext.getColor(R.color.primary_plot_color), PlotView.textSize),
-    PlotPaint.byColor(applicationContext.getColor(R.color.secondary_plot_color), PlotView.textSize),
-    PlotPaint.byColor(applicationContext.getColor(R.color.secondary_plot_color_alt), PlotView.textSize)
-    ) { appPreferences.consumptionPlotSecondaryColor }
+    private lateinit var consumptionPlotLinePaint: PlotLinePaint
 
     private val chargePlotLinePaint = PlotLinePaint(
-    PlotPaint.byColor(applicationContext.getColor(R.color.charge_plot_color), PlotView.textSize),
-    PlotPaint.byColor(applicationContext.getColor(R.color.secondary_plot_color), PlotView.textSize),
-    PlotPaint.byColor(applicationContext.getColor(R.color.secondary_plot_color_alt), PlotView.textSize)
+    PlotPaint.byColor(applicationContext.getColor(R.color.charge_plot_color), CarStatsViewer.appContext.resources.getDimension(R.dimen.reduced_font_size)),
+    PlotPaint.byColor(applicationContext.getColor(R.color.secondary_plot_color), CarStatsViewer.appContext.resources.getDimension(R.dimen.reduced_font_size)),
+    PlotPaint.byColor(applicationContext.getColor(R.color.secondary_plot_color_alt), CarStatsViewer.appContext.resources.getDimension(R.dimen.reduced_font_size))
     ) { appPreferences.chargePlotSecondaryColor }
 
     private val seekBarChangeListener = object : SeekBar.OnSeekBarChangeListener {
@@ -87,6 +89,16 @@ class SummaryFragment() : Fragment(R.layout.fragment_summary) {
         override fun onStopTrackingTouch(seekBar: SeekBar?) {}
     }
 
+    override fun onGetLayoutInflater(savedInstanceState: Bundle?): LayoutInflater {
+        return if (CarStatsViewer.appPreferences.colorTheme > 0) {
+            val inflater = super.onGetLayoutInflater(savedInstanceState)
+            val contextThemeWrapper: Context = ContextThemeWrapper(requireContext(), R.style.ColorTestTheme)
+            inflater.cloneInContext(contextThemeWrapper)
+        } else {
+            super.onGetLayoutInflater(savedInstanceState)
+        }
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
@@ -94,11 +106,38 @@ class SummaryFragment() : Fragment(R.layout.fragment_summary) {
             applyTypeface(view)
         }
 
+        consumptionPlotLinePaint = PlotLinePaint(
+            PlotPaint.byColor(getColorFromAttribute(requireContext(), R.attr.primary_plot_color), CarStatsViewer.appContext.resources.getDimension(R.dimen.reduced_font_size)),
+            PlotPaint.byColor(getColorFromAttribute(requireContext(), R.attr.secondary_plot_color), CarStatsViewer.appContext.resources.getDimension(R.dimen.reduced_font_size)),
+            PlotPaint.byColor(getColorFromAttribute(requireContext(), R.attr.tertiary_plot_color), CarStatsViewer.appContext.resources.getDimension(R.dimen.reduced_font_size))
+        ) { appPreferences.consumptionPlotSecondaryColor }
+
         setupPlots()
         setSecondaryConsumptionPlotDimension(appPreferences.secondaryConsumptionDimension)
         setupListeners()
 
         summary_view_selector.buttonList[2].isEnabled = false
+
+        // Don't allow the scroll view to scroll when interacting with plots
+        fun disallowIntercept(v: View, event: MotionEvent) {
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.parent.requestDisallowInterceptTouchEvent(true)
+                }
+                MotionEvent.ACTION_UP -> {
+                    v.parent.requestDisallowInterceptTouchEvent(false)
+                }
+            }
+        }
+
+        summary_consumption_plot.setOnTouchListener { v, event ->
+            disallowIntercept(v, event)
+            false
+        }
+        summary_charge_plot_view.setOnTouchListener { v, event ->
+            disallowIntercept(v, event)
+            false
+        }
 
         // check if a session has been provided, else close fragment
         if (this::session.isInitialized) {
@@ -206,8 +245,8 @@ class SummaryFragment() : Fragment(R.layout.fragment_summary) {
 
         summary_charge_plot_view.dimension = PlotDimensionX.TIME
         summary_charge_plot_view.dimensionRestrictionMin = TimeUnit.MINUTES.toMillis(5)
-        // summary_charge_plot_view.dimensionSmoothing = 0.01f
-        // summary_charge_plot_view.dimensionSmoothingType = PlotDimensionSmoothingType.PERCENTAGE
+        summary_charge_plot_view.dimensionSmoothing = 0.01f
+        summary_charge_plot_view.dimensionSmoothingType = PlotDimensionSmoothingType.PERCENTAGE
         summary_charge_plot_view.dimensionYSecondary = PlotDimensionY.STATE_OF_CHARGE
 
         summary_charge_plot_view.addPlotLine(chargePlotLine, chargePlotLinePaint)
@@ -234,7 +273,7 @@ class SummaryFragment() : Fragment(R.layout.fragment_summary) {
                 }
                 if (session.drivingPoints == null || session.chargingSessions == null) {
                     val fullSession = CarStatsViewer.tripDataSource.getFullDrivingSession(sessionId = session.driving_session_id)
-
+                    InAppLogger.d("[SUM] Loading driving points and charging sessions")
                     session.drivingPoints = fullSession.drivingPoints
                     session.chargingSessions = fullSession.chargingSessions
 
@@ -275,8 +314,10 @@ class SummaryFragment() : Fragment(R.layout.fragment_summary) {
                 }
 
                 session.chargingSessions?.let {  chargingSessions ->
-                    if (chargingSessions.isNotEmpty()) {
-                        completedChargingSessions = chargingSessions.filter { it.end_epoch_time != null }
+                    completedChargingSessions = if (chargingSessions.isNotEmpty()) {
+                        chargingSessions.filter { it.end_epoch_time != null }
+                    } else {
+                        listOf()
                     }
                     requireActivity().runOnUiThread {
 
@@ -330,9 +371,11 @@ class SummaryFragment() : Fragment(R.layout.fragment_summary) {
             summary_trip_selector.visibility = View.VISIBLE
             summary_selector_title.text = resources.getStringArray(R.array.trip_type_names)[session.session_type]
             summary_selected_trip_bar.forEach { bar ->
-                bar.background = applicationContext.getColor(R.color.disable_background).toDrawable()
+                bar.background = getColorFromAttribute(requireContext(), R.attr.widget_background).toDrawable()
+                // bar.background = applicationContext.getColor(R.color.club_night_variant).toDrawable()
             }
-            summary_selected_trip_bar[appPreferences.mainViewTrip].background = primaryColor.toColor().toDrawable()
+            // summary_selected_trip_bar[appPreferences.mainViewTrip].background = applicationContext.getDrawable(R.drawable.bg_button_selected)
+            summary_selected_trip_bar[appPreferences.mainViewTrip].background = getColorFromAttribute(requireContext(), android.R.attr.colorControlActivated).toDrawable()
         }
 
         summary_trip_date_text.text = getString(R.string.summary_trip_start_date).format(StringFormatters.getDateString(Date(session.start_epoch_time)))
@@ -365,7 +408,7 @@ class SummaryFragment() : Fragment(R.layout.fragment_summary) {
         summary_charge_plot_view.reset()
         chargePlotLine.reset()
 
-        if (completedChargingSessions.isEmpty() || progress >= completedChargingSessions.size || progress < 0) {
+        if (completedChargingSessions.isEmpty() || progress >= completedChargingSessions.size || progress < 0 || completedChargingSessions[progress].chargingPoints?.isEmpty() == true) {
             summary_charge_plot_sub_title_curve.text = "%s (0/0)".format(
                 getString(R.string.settings_sub_title_last_charge_plot))
 
@@ -434,7 +477,7 @@ class SummaryFragment() : Fragment(R.layout.fragment_summary) {
 
         chargePlotLine.reset()
         completedChargingSessions[progress].chargingPoints?.let {
-            chargePlotLine.addDataPoints(DataConverters.chargePlotLineFromChargingPoints(it))
+            if (it.isNotEmpty()) chargePlotLine.addDataPoints(DataConverters.chargePlotLineFromChargingPoints(it))
         }
 
         summary_charge_plot_view.dimensionRestriction = TimeUnit.MINUTES.toMillis((TimeUnit.MILLISECONDS.toMinutes((completedChargingSessions[progress].end_epoch_time?:0) - completedChargingSessions[progress].start_epoch_time) / 5) + 1) * 5 + 1
@@ -478,7 +521,9 @@ class SummaryFragment() : Fragment(R.layout.fragment_summary) {
         CoroutineScope(Dispatchers.IO).launch {
             CarStatsViewer.dataProcessor.changeSelectedTrip(index + 1)
             CarStatsViewer.tripDataSource.getActiveDrivingSessionsIdsMap()[index + 1]?.let {
+                InAppLogger.d("[SUM] Changing trip")
                 session = CarStatsViewer.tripDataSource.getFullDrivingSession(it)
+                InAppLogger.d("Charging sessions: ${session.chargingSessions}")
                 requireActivity().runOnUiThread {
                     applySession(session)
                 }
