@@ -20,12 +20,12 @@ android {
     productFlavors {
         stable {
             dimension "version"
-            applicationId "com.ixam97.carStatsViewer"
+            applicationId "fi.nylate.carStatsViewer"
         }
 
         dev {
             dimension "version"
-            applicationId "com.ixam97.carStatsViewer_dev"
+            applicationId "fi.nylate.carStatsViewer_dev"
         }
     }
 
